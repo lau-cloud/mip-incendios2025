@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Incendios Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.14.0/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@5.14.0/dist/maplibre-gl.js"></script>
+  <style>
+    html, body, #map { height: 100%; margin: 0; padding: 0; }
+    .maplibregl-popup-content {
+      background: rgba(255, 255, 255, 0.78);
+      border-radius: 8px;
+      padding: 10px;
+      text-align: center;
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+    }
+
+    .popup-ha {
+      color: #d62828;
+      font-weight: bold;
+      font-size: 15px;
+      display: block;
+      margin-top: 5px;
+    }
+
+   
+    #filters {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 5;
+      display: flex;
+      gap: 8px;
+    }
+
+    #filters button {
+      background: white;
+      padding: 6px 12px;
+      border: 1px solid #888;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    #filters button:hover {
+      background: #eee;
+    }
+
+    #filters button.active {
+        background: #d62828;
+        color: white;
+        border-color: #d62828;
+    }
+
+    #legend {
+        position: absolute;
+        bottom: 10px;
+        left: 10px;
+        background: white;
+        padding: 6px 10px;
+        border-radius: 4px;
+        border: 1px solid #888;
+        font-size: 13px;
+        z-index: 5;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+     }
+
+    #legend .color-box {
+        width: 14px;
+        height: 14px;
+        background: #FA3939;
+        border: 1px solid #333;
+     }
+
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div id="filters">
+  <button onclick="filterSize('all')">Todos</button>
+  <button onclick="filterSize('small')">&lt; 50 ha</button>
+  <button onclick="filterSize('medium')">50–200 ha</button>
+  <button onclick="filterSize('large')">&gt; 200 ha</button>
+</div>
+<div id="legend">
+  <div class="color-box"></div> Área quemada 2025
+</div>
+
+<script>
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: 'https://tiles.openfreemap.org/styles/bright',
+    center: [-3, 40],
+    zoom: 5
+  });
+
+  
+
+//Fecha conversión
+function fechaLarga(fechaStr) {
+    if (!fechaStr) return "Sin fecha";
+
+    const meses = [
+      "enero", "febrero", "marzo", "abril", "mayo", "junio",
+      "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+    ];
+
+    const d = new Date(fechaStr);
+    if (isNaN(d)) return fechaStr;
+
+    return `${d.getDate()} de ${meses[d.getMonth()]} de ${d.getFullYear()}`;
+  }
+
+  map.on('load', () => {
+    map.addSource('incendios', {
+      type: 'geojson',
+      data: 'https://raw.githubusercontent.com/lau-cloud/mip-incendios2025/main/data/incendios2.geojson'
+    });
+
+    // Fill layer (polygons)
+    map.addLayer({
+      id: 'incendios',         
+      type: 'fill',
+      source: 'incendios',
+      paint: {
+        'fill-color': '#FA3939',
+        'fill-opacity': 0.8
+      }
+    });
+
+    // Outline layer
+    map.addLayer({
+      id: 'incendios-outline',
+      type: 'line',
+      source: 'incendios',
+      paint: {
+        'line-color': '#FF8C00',
+        'line-width': 1
+      }
+    });
+
+    // Popup (create once)
+    const popup = new maplibregl.Popup({
+      closeButton: false,
+      closeOnClick: false
+    });
+
+    // Show popup at cursor while hovering
+    map.on('mousemove', 'incendios', (e) => {
+    if (!e || !e.features || e.features.length === 0) {
+        popup.remove();
+        return;
+    }
+
+    map.getCanvas().style.cursor = 'pointer';
+    const feature = e.features[0];
+    const props = feature.properties || {};
+
+    // Read attributes
+    const fechaRaw = props.initialdate || props.fecha || "";
+    const fechaFormateada = fechaLarga(fechaRaw);
+
+    const municipio = props.admlvl5 || props.municipio || "Desconocido";
+    const ha = props.area_ha || props.ha || props.area || "N/A";
+
+    popup
+        .setLngLat(e.lngLat)
+        .setHTML(`
+        <strong>${municipio}</strong><br>
+        <span>Fecha: ${fechaFormateada}</span><br>
+        <span class="popup-ha">${ha} ha</span>
+        `)
+        .addTo(map);
+    });
+
+    // Remove popup when leaving
+    map.on('mouseleave', 'incendios', () => {
+      map.getCanvas().style.cursor = '';
+      popup.remove();
+    });
+  });
+
+  /* ---------------- FILTERING BY AREA ---------------- */
+   function filterSize(size) {
+  let filter;
+
+  switch (size) {
+    case 'small':
+      filter = ['<', ['get', 'area_ha'], 100];
+      break;
+    case 'medium':
+      filter = ['all', ['>=', ['get', 'area_ha'], 100], ['<=', ['get', 'area_ha'], 1000]];
+      break;
+    case 'large':
+      filter = ['>', ['get', 'area_ha'], 1000];
+      break;
+    default:
+      filter = null;
+  }
+
+  map.setFilter('incendios', filter);
+  map.setFilter('incendios-outline', filter);
+
+  // ---- MARCAR BOTONES ----
+  const buttons = document.querySelectorAll("#filters button");
+  buttons.forEach(btn => btn.classList.remove("active"));
+
+  const clickedButton = [...buttons].find(btn => btn.textContent.includes(
+    size === "all" ? "Todos" :
+    size === "small" ? "<" :
+    size === "medium" ? "50–200" :
+    size === "large" ? ">" : ""
+  ));
+
+  if (clickedButton) clickedButton.classList.add("active");
+}
+
+    map.on('style.load', () => {
+        map.setProjection({
+            type: 'globe', // Set projection to globe
+        });
+    });
+</script>
+</body>
+</html>
